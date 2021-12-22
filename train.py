@@ -7,7 +7,7 @@ from transformers import TrainingArguments, IntervalStrategy, Trainer
 from transformers.integrations import TensorBoardCallback
 
 from config import Config
-from data import FeministDataset
+from process_data import FeministDataset
 
 eval_steps: int = 50
 batch_size: int = 1

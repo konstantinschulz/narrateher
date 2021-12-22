@@ -23,6 +23,7 @@ def generate_texts_for_prompts():
                           "hatte eine Teilzeitstelle als", "hatte einen Job als", "wurde wahrgenommen als", "galt als",
                           "wurde betrachtet als", "wurde beschrieben als", "war sehr bekannt dafür"]
     outputs: list[str] = []
+    Config.model().eval()
     for prompt in tqdm(prompts):
         for lead in leads:
             # input_ids: torch.Tensor = tokenizer(input_text, return_tensors=TensorType.PYTORCH)["input_ids"].to(Config.device)
@@ -30,16 +31,18 @@ def generate_texts_for_prompts():
             # print(tokenizer.decode(output[0]))
             input_text: str = lead + prompt
             output_text: str = get_generated_text(input_text)
-            print(output_text)
+            # print(output_text)
             outputs.append(output_text)
     with open(Config.outputs_path, "w+") as f:
         json.dump(outputs, f)
 
 
 def get_generated_text(input_text) -> str:
+    # avoid endoftext tokens by adding "0" to the bad_words_ids
     output: torch.Tensor = Config.model().generate(
         Config.tokenizer().encode(input_text, return_tensors=TensorType.PYTORCH).to(Config.device), do_sample=True,
-        top_p=0.92, top_k=0, temperature=0.7, num_return_sequences=20, max_length=Config.max_generation_length)[0]
+        top_p=0.92, top_k=0, temperature=0.7, num_return_sequences=20, max_length=Config.max_generation_length,
+        bad_words_ids=[[0]])[0]
     return Config.tokenizer().decode(output)
 
 
@@ -56,4 +59,6 @@ def plot_word_cloud():
             plt.savefig(os.path.join(Config.plots_dir, f"baseline_{lead}.png"))
             plt.show()
 
-# plot_word_cloud()
+
+generate_texts_for_prompts()
+plot_word_cloud()
