@@ -1,3 +1,7 @@
 .idea
+checkpoint-*
 data
+models
 runs
+__pycache__
+model.zip

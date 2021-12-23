@@ -1,16 +1,19 @@
+import json
 import os.path
 import re
 import time
+from typing import Generator, Union
 
 import bibtexparser
 import nltk as nltk
 import requests as requests
+import torch
 from bibtexparser.bibdatabase import BibDatabase
 from bs4 import BeautifulSoup, Tag
 from tika import parser
 from torch.utils.data import Dataset
 from tqdm import tqdm
-from transformers import BatchEncoding, TensorType
+from transformers import BatchEncoding, TensorType, PreTrainedTokenizerFast
 
 from config import Config
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
@@ -18,6 +21,49 @@ from requests.packages.urllib3.exceptions import InsecureRequestWarning
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 # disable SSL verification because the genderopen.de server does not have a valid configuration
 verify_ssl: bool = False
+
+
+class FeminismDetectionItem:
+    def __init__(self, text: str = "", label: int = 0):
+        self.label: int = label
+        self.text: str = text
+
+    def to_json(self) -> str:
+        return json.dumps(self.__dict__) + "\n"
+
+
+class FeminismDetectionDataset(Dataset):
+    def __init__(self, tokenizer: PreTrainedTokenizerFast = None, max_length: int = 512) -> None:
+        self.max_length: int = max_length
+        self.tokenizer: PreTrainedTokenizerFast = tokenizer
+        with open(Config.feminism_detection_dataset_path) as f:
+            self._len: int = sum([1 for x in f.readlines()])
+
+    def __getitem__(self, idx: int) -> Union[BatchEncoding, FeminismDetectionItem]:
+        with open(Config.feminism_detection_dataset_path) as f:
+            for i, line in enumerate(f.readlines()):
+                if i == idx:
+                    fdi: FeminismDetectionItem = FeminismDetectionItem(**json.loads(line))
+                    if not self.tokenizer:
+                        return fdi
+                    encodings: BatchEncoding = self.tokenizer(
+                        fdi.text, truncation=True, padding="max_length", max_length=self.max_length,
+                        return_tensors=TensorType.PYTORCH)
+                    for k, v in encodings.items():
+                        encodings[k] = v.squeeze().to(Config.device)
+                    target: torch.Tensor = torch.zeros(2, device=Config.device)
+                    target[fdi.label] = 1
+                    encodings["labels"] = target
+                    return encodings
+
+    def __iter__(self) -> Generator[FeminismDetectionItem, None, None]:
+        with open(Config.feminism_detection_dataset_path) as f:
+            for line in f.readlines():
+                if len(line) > 1:
+                    yield FeminismDetectionItem(**json.loads(line))
+
+    def __len__(self) -> int:
+        return self._len
 
 
 class FeministDataset(Dataset):
@@ -129,6 +175,35 @@ def extract_text_from_pdf():
             f.write(content)
 
 
+def get_negative_quotes():
+    with open(Config.feminism_detection_dataset_path, "a+") as f2:
+        for file in tqdm([x for x in os.listdir(Config.anti_feminism_dir) if x.endswith(".html")]):
+            with open(os.path.join(Config.anti_feminism_dir, file)) as f:
+                soup: BeautifulSoup = BeautifulSoup(f, "html.parser")
+                quote_tags: list[Tag] = soup.find_all("i")
+                texts: list[str] = [x.text.replace("\n", "").replace('"', "") for x in quote_tags]
+                texts = [re.sub(r" +", " ", x) for x in texts]
+                for text in texts:
+                    fdi: FeminismDetectionItem = FeminismDetectionItem(text=text, label=0)
+                    f2.write(fdi.to_json())
+
+
+def get_positive_quotes():
+    negative_label_count: int
+    with open(Config.feminism_detection_dataset_path) as f:
+        negative_label_count = sum([1 for x in f.readlines()])
+    with open(Config.feminism_detection_dataset_path, "a+") as f:
+        positive_label_count: int = 0
+        with open(Config.dataset_path) as f2:
+            for line in tqdm(f2.readlines()):
+                if "femin" in line:
+                    fdi: FeminismDetectionItem = FeminismDetectionItem(text=line[:-1], label=1)
+                    f.write(fdi.to_json())
+                    positive_label_count += 1
+                    if positive_label_count >= negative_label_count:
+                        break
+
+
 def get_response(url: str) -> requests.Response:
     time.sleep(0.5)
     return requests.get(url, verify=verify_ssl, timeout=60)
@@ -191,3 +266,5 @@ def tokenize():
 # extract_text_from_pdf()
 # tokenize()
 # aggregate_dataset()
+# get_negative_quotes()
+# get_positive_quotes()
